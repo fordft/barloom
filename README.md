@@ -41,7 +41,7 @@ Changing the signing identity may cause macOS to ask for Screen Recording and Ac
 
 1. Open **Settings** in the dashboard and enable the modules you want. Menu Bar management starts disabled.
 2. Click Barloom's menu bar icon or press **Control–Option–B** to open the icon shelf. Click **Barloom** at the left of the shelf for live CPU, RAM, battery, network, disk, and local-port readings. Switch to **Port Manager** in the same panel to search listeners, copy their URLs, or open them in a browser. **Shift-click** the menu bar icon for the Quick Monitor popover.
-3. In **Menu Bar** settings, choose which discovered icons appear in the shelf. Right-click Barloom and choose **Open All Hidden Icons** to reach hidden icons that are not selected.
+3. In **Menu Bar** settings, choose which discovered icons appear in the shelf. Right-click an icon in the shelf for **Open app menu** or **Right-click original icon**. Right-click Barloom's menu bar icon and choose **Open All Hidden Icons** to reach hidden icons that are not selected.
 4. Open **Local Ports** to inspect listeners. The Stop action is offered only for supported development processes owned by your user and asks for confirmation.
 
 ## Menu bar permissions and limits

@@ -298,6 +298,9 @@ final class IconShelfController {
         }
         guard state.canControl else { model.openDashboard?(.menuBar); return }
         let activationContext = context
+        // A native context menu needs to become key in its owning app. Remove
+        // our floating shelf before sending the secondary click.
+        if rightClick { model.closeIconShelf() }
         isActivating = true
         Task { [weak self] in
             guard let self else { return }
@@ -426,8 +429,19 @@ struct MenuBarIconButton: NSViewRepresentable {
     @MainActor
     final class IconButton: NSButton {
         var activate: ((Bool) -> Void)?
-        override func rightMouseDown(with event: NSEvent) { activate?(true) }
-        override func rightMouseUp(with event: NSEvent) {}
+        override func rightMouseDown(with event: NSEvent) {
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            let open = NSMenuItem(title: "Open app menu", action: #selector(openAppMenu), keyEquivalent: "")
+            open.target = self
+            menu.addItem(open)
+            let secondary = NSMenuItem(title: "Right-click original icon", action: #selector(rightClickOriginalIcon), keyEquivalent: "")
+            secondary.target = self
+            menu.addItem(secondary)
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+        }
+        @objc private func openAppMenu() { activate?(false) }
+        @objc private func rightClickOriginalIcon() { activate?(true) }
         @objc func clicked() { activate?(NSApp.currentEvent?.modifierFlags.contains(.control) == true) }
     }
 

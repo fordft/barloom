@@ -81,9 +81,8 @@ actor MenuBarActivation {
             try await Task.sleep(for: .milliseconds(80))
         }
         guard let item else { throw MenuBarActivationError.itemExited }
-        guard visibleBounds.map({ Self.isClickable(item, on: $0) }) != false else {
-            throw MenuBarActivationError.unsupported
-        }
+        let isVisible = visibleBounds.map { Self.isClickable(item, on: $0) } != false
+        if !rightClick && !isVisible { throw MenuBarActivationError.unsupported }
         // Prefer the app's supported accessibility action. Scan only its extra menu bar,
         // never document windows, text fields, or other application content.
         let appPIDs = await MainActor.run {
@@ -97,6 +96,14 @@ actor MenuBarActivation {
                 if AXUIElementPerformAction(element, action as CFString) == .success { return }
             }
         }
+        if rightClick && !isVisible {
+            // A hidden status item's window can remain just outside the display
+            // even after the spacer contracts. Address the item's window in its
+            // owning process instead of clicking an unrelated screen position.
+            try await postWindowTargetedRightClick(to: item)
+            return
+        }
+        guard isVisible else { throw MenuBarActivationError.unsupported }
         // Some status extras expose no AXPress. Send a real session mouse event
         // to the now-visible item so WindowServer can route its native menu.
         let point = CGPoint(x: item.frame.midX, y: item.frame.midY)
@@ -116,6 +123,37 @@ actor MenuBarActivation {
         down.post(tap: .cgSessionEventTap)
         try await Task.sleep(for: .milliseconds(35))
         up.post(tap: .cgSessionEventTap)
+    }
+
+    private func postWindowTargetedRightClick(to item: MenuBarWindow) async throws {
+        let payloads = await Self.rightClickEventData(for: item)
+        guard payloads.count == 2 else { throw MenuBarActivationError.unsupported }
+        for payload in payloads {
+            guard let event = CGEvent(withDataAllocator: nil, data: payload as CFData) else {
+                throw MenuBarActivationError.unsupported
+            }
+            event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(item.ownerPID))
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(item.id))
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(item.id))
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
+            event.postToPid(item.ownerPID)
+            try await Task.sleep(for: .milliseconds(35))
+        }
+    }
+
+    @MainActor
+    private static func rightClickEventData(for item: MenuBarWindow) -> [Data] {
+        [NSEvent.EventType.rightMouseDown, .rightMouseUp].compactMap { type in
+            guard let native = NSEvent.mouseEvent(with: type,
+                                                  location: CGPoint(x: item.frame.width / 2, y: item.frame.height / 2),
+                                                  modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: Int(item.id), context: nil, eventNumber: 0,
+                                                  clickCount: 1, pressure: 1),
+                  let event = native.cgEvent else { return nil }
+            event.location = CGPoint(x: item.frame.midX, y: item.frame.midY)
+            guard let data = event.data else { return nil }
+            return data as Data
+        }
     }
 
     private func matchingExtra(in app: AXUIElement, frame: CGRect, allowSingleItem: Bool) -> AXUIElement? {
