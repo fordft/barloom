@@ -28,7 +28,7 @@ struct MenuBarPage: View {
                             .font(.system(size: 12, weight: .medium)).foregroundStyle(AppColors.violet)
                         Spacer()
                     }.padding(14).background(AppColors.violet.opacity(0.08), in: RoundedRectangle(cornerRadius: 11))
-                    Text("Opening this bar keeps icons hidden on the main menu bar. Long rows scroll horizontally within your display.")
+                    Text("Long rows scroll within your display. Clicking an icon opens its app’s native menu at the system menu bar; macOS does not let Barloom move another app’s menu below this shelf.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     HStack {
                         Button(model.overflowSection == nil ? "Open icon bar" : "Close icon bar") { model.toggleHidden() }
@@ -124,7 +124,7 @@ struct MenuBarPermissionCard: View {
                 }
                 HStack {
                     Image(systemName: "hand.tap").foregroundStyle(AppColors.violet).frame(width: 24)
-                    SectionHeading(title: "Accessibility", detail: "Open an app’s menu when you click its icon in the bar.")
+                    SectionHeading(title: "Accessibility", detail: "Activate the real status item when you click its image in the shelf.")
                     Spacer()
                     if access.canControl { StatusPill(title: "Allowed") }
                     else { Button("Allow…") { access.requestControl() }.controlSize(.small) }

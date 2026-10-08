@@ -14,6 +14,8 @@ struct IconShelfContext {
     let fixtureIcons: [CapturedMenuBarIcon]
     let fixtureAction: ((UInt32) -> Void)?
     let selectedWindowIDs: Set<UInt32>?
+    let prepareActivation: (() -> Void)?
+    let finishActivation: (() -> Void)?
 }
 
 @MainActor
@@ -43,6 +45,7 @@ final class IconShelfController {
     private let activation = MenuBarActivation()
     private let panel: IconShelfPanel
     private var context: IconShelfContext?
+    private var isActivating = false
     private var refreshTask: Task<Void, Never>?
     private var autoCloseTask: Task<Void, Never>?
     private var globalMouseMonitor: Any?
@@ -117,7 +120,7 @@ final class IconShelfController {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.refreshIcons()
-                do { try await Task.sleep(for: .seconds(2)) }
+                do { try await Task.sleep(for: .milliseconds(1_500)) }
                 catch { return }
             }
         }
@@ -146,20 +149,21 @@ final class IconShelfController {
         localMouseMonitor = nil
         panel.orderOut(nil)
         context = nil
+        isActivating = false
         state.icons = []
     }
 
     private func refreshIcons() async {
-        guard let context, panel.isVisible else { return }
-        defer { state.isLoading = false }
+        guard let context, panel.isVisible, !isActivating else { return }
+        defer { if state.isLoading { state.isLoading = false } }
         if !context.fixtureIcons.isEmpty {
             state.icons = context.fixtureIcons
             resizeToIcons()
             return
         }
         model.menuBarAccess.refresh()
-        state.canCapture = model.menuBarAccess.canCapture
-        state.canControl = model.menuBarAccess.canControl
+        if state.canCapture != model.menuBarAccess.canCapture { state.canCapture = model.menuBarAccess.canCapture }
+        if state.canControl != model.menuBarAccess.canControl { state.canControl = model.menuBarAccess.canControl }
         guard state.canCapture else { state.icons = []; resize(width: 540); return }
         let windows = await catalog.windows()
         guard !Task.isCancelled else { return }
@@ -198,17 +202,33 @@ final class IconShelfController {
         let hiddenIDs = Set(hiddenSpacers.map(\.id)).union([hidden.id])
         let dividers = spacers.map { MenuBarDivider(windowID: $0.id, frame: $0.frame, section: hiddenIDs.contains($0.id) ? .hidden : .alwaysHidden) }
         let selected: [MenuBarWindow]
+        var selectionFallbackNotice: String?
         if let ids = context.selectedWindowIDs {
-            selected = row.filter { ids.contains($0.id) && $0.isIconSized }.sorted { $0.frame.minX < $1.frame.minX }
+            let matches = row.filter { ids.contains($0.id) && $0.isIconSized }.sorted { $0.frame.minX < $1.frame.minX }
+            if matches.isEmpty && !ids.isEmpty {
+                // Status items get new window IDs on each display. If a saved
+                // selection cannot be mapped here, keep the hidden bar usable.
+                selected = MenuBarGeometry.icons(row, between: dividers, selectedDividerID: hidden.id,
+                                                 section: .hidden, excludedIDs: Set(own.map(\.id)))
+                selectionFallbackNotice = "Showing hidden icons on this display. Refresh selections in Menu Bar settings."
+            } else {
+                selected = matches
+            }
         } else {
             selected = MenuBarGeometry.icons(row, between: dividers, selectedDividerID: hidden.id,
                                             section: state.section, excludedIDs: Set(own.map(\.id)))
         }
         let captured = await catalog.capture(selected)
-        guard !Task.isCancelled else { return }
-        state.icons = captured
-        state.notice = captured.contains(where: { $0.png == nil }) ? "Some icons could not be captured. Refresh the bar to try again." : nil
-        resizeToIcons()
+        guard !Task.isCancelled, !isActivating else { return }
+        let changed = captured.count != state.icons.count || zip(captured, state.icons).contains {
+            $0.0.id != $0.1.id || $0.0.png != $0.1.png || $0.0.window.frame != $0.1.window.frame
+        }
+        if changed {
+            state.icons = captured
+            resizeToIcons()
+        }
+        let notice = captured.contains(where: { $0.png == nil }) ? "Some icons could not be captured. Refresh the bar to try again." : selectionFallbackNotice
+        if state.notice != notice { state.notice = notice }
     }
 
     private func resizeToIcons() {
@@ -227,37 +247,48 @@ final class IconShelfController {
     }
 
     private func activate(_ icon: CapturedMenuBarIcon, rightClick: Bool) {
+        guard !isActivating else { return }
         if let action = context?.fixtureAction {
             model.closeIconShelf()
             action(icon.id)
             return
         }
         guard state.canControl else { model.openDashboard?(.menuBar); return }
-        model.closeIconShelf()
+        let activationContext = context
+        isActivating = true
         Task { [weak self] in
             guard let self else { return }
+            activationContext?.prepareActivation?()
             do {
-                try await Task.sleep(for: .milliseconds(60))
-                try await self.activation.activate(icon.window, rightClick: rightClick)
+                let screenBounds = activationContext.map {
+                    MenuBarGeometry.quartzRect(fromAppKit: $0.screen.frame, primaryDisplayTop: $0.primaryDisplayTop)
+                }
+                try await self.activation.activate(icon.window, rightClick: rightClick, visibleBounds: screenBounds)
+                // Keep the real status item available while its native menu opens.
+                try? await Task.sleep(for: .seconds(2))
             } catch {
                 self.model.menuBarNotice = error.localizedDescription
                 self.model.openDashboard?(.menuBar)
             }
+            activationContext?.finishActivation?()
+            self.isActivating = false
+            if self.panel.isVisible { await self.refreshIcons() }
         }
     }
 
     private func installDismissMonitors() {
-        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated { self?.dismissIfOutside() }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated { self?.dismissIfOutside(event: event) }
         }
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            MainActor.assumeIsolated { self?.dismissIfOutside() }
+            MainActor.assumeIsolated { self?.dismissIfOutside(event: event) }
             return event
         }
     }
 
-    private func dismissIfOutside() {
-        guard panel.isVisible, let context else { return }
+    private func dismissIfOutside(event: NSEvent) {
+        guard panel.isVisible, let context, !isActivating else { return }
+        if event.windowNumber == panel.windowNumber { return }
         let location = NSEvent.mouseLocation
         if !panel.frame.contains(location) && !context.anchorFrame.insetBy(dx: -8, dy: -3).contains(location) {
             model.closeIconShelf()
@@ -331,8 +362,8 @@ struct MenuBarIconButton: NSViewRepresentable {
     @MainActor
     final class IconButton: NSButton {
         var activate: ((Bool) -> Void)?
-        override func rightMouseDown(with event: NSEvent) {}
-        override func rightMouseUp(with event: NSEvent) { activate?(true) }
+        override func rightMouseDown(with event: NSEvent) { activate?(true) }
+        override func rightMouseUp(with event: NSEvent) {}
         @objc func clicked() { activate?(NSApp.currentEvent?.modifierFlags.contains(.control) == true) }
     }
 

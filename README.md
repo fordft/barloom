@@ -48,7 +48,7 @@ Changing the signing identity may cause macOS to ask for Screen Recording and Ac
 
 Barloom asks for **Screen Recording** only when you choose to allow icon image capture, and for **Accessibility** when you choose to allow opening or moving other apps' menu bar items. System Monitor, Runner, and Local Ports work without these permissions. Captured status images stay in memory; Barloom does not record audio or send readings to a service.
 
-The icon chooser controls which items appear in Barloom's shelf. macOS may still keep a selected icon in the main menu bar if it refuses to move that item. Some apps expose limited menu actions, so activation or movement can vary by app and macOS version. The shelf is positioned for the active display and closes when the display or Space changes.
+The icon chooser controls which items appear in Barloom's shelf. Clicking an image temporarily reveals and activates the real status item; the other app's native menu opens from its item in the **system menu bar**. macOS does not provide a way to relocate another app's menu or custom popover to Barloom's shelf. Barloom keeps the shelf visible during activation. Some apps expose limited menu actions, so activation or movement can vary by app and macOS version. The shelf is positioned for the active display and closes when the display or Space changes.
 
 Port discovery is limited to sockets visible to the current user. **Open** assumes HTTP, except ports 443 and 8443, which use HTTPS; a non-web listener may not open in a browser.
 

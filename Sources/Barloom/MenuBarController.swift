@@ -290,7 +290,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
 
     private func makeShelfContext() async -> IconShelfContext? {
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main ?? NSScreen.screens.first else { return nil }
-        if model.preferences.menuBarSelectionConfigured { await model.menuBarLibrary.refresh(on: screen) }
+        if model.preferences.menuBarSelectionConfigured && model.overflowSection != .all {
+            await model.menuBarLibrary.refresh(on: screen)
+        }
         let top = MenuBarDisplay.primaryDisplayTop
         let windows = await MenuBarCatalog().windows()
         let rowTop = MenuBarDisplay.statusRowTop(on: screen, windows: windows, primaryDisplayTop: top)
@@ -316,7 +318,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
                                 alwaysWindowID: nil, sourceControlWidth: control?.frame.width ?? expectedWidth,
                                 fixtureIcons: fixtureSnapshots(primaryDisplayTop: top), fixtureAction: fixtureItems.isEmpty ? nil : { [weak self] id in self?.fixtureActivated(id) },
                                 selectedWindowIDs: model.preferences.menuBarSelectionConfigured && model.overflowSection != .all ?
-                                    Set(model.menuBarLibrary.icons.filter { model.preferences.selectedMenuBarItems.contains($0.key) }.map(\.id)) : nil)
+                                    Set(model.menuBarLibrary.icons.filter { model.preferences.selectedMenuBarItems.contains($0.key) }.map(\.id)) : nil,
+                                prepareActivation: { [weak self] in self?.hiddenDivider?.length = 18 },
+                                finishActivation: { [weak self] in self?.updateDividers() })
     }
 
     private func changeMembership(_ icon: LibraryMenuBarIcon, included: Bool) {

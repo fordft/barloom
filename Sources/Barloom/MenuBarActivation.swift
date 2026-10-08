@@ -17,6 +17,10 @@ enum MenuBarActivationError: Error, LocalizedError {
 }
 
 actor MenuBarActivation {
+    static func isClickable(_ item: MenuBarWindow, on screen: CGRect) -> Bool {
+        item.isIconSized && screen.contains(CGPoint(x: item.frame.midX, y: item.frame.midY))
+    }
+
     func move(_ recorded: MenuBarWindow, nextTo recordedAnchor: MenuBarWindow, before: Bool) async throws {
         guard AXIsProcessTrusted() else { throw MenuBarActivationError.permissionRequired }
         let windows = await MenuBarCatalog().windows()
@@ -62,12 +66,23 @@ actor MenuBarActivation {
         }
     }
 
-    func activate(_ recorded: MenuBarWindow, rightClick: Bool) async throws {
+    func activate(_ recorded: MenuBarWindow, rightClick: Bool, visibleBounds: CGRect?) async throws {
         guard AXIsProcessTrusted() else { throw MenuBarActivationError.permissionRequired }
-        let current = await MenuBarCatalog().windows()
-        guard let item = current.first(where: { $0.id == recorded.id }),
-              item.ownerPID == recorded.ownerPID, item.title == recorded.title, item.isIconSized else {
-            throw MenuBarActivationError.itemExited
+        var item: MenuBarWindow?
+        // The spacer was just collapsed. Let WindowServer lay out the real item
+        // before clicking it; a click on its hidden/offscreen frame is ignored.
+        for _ in 0..<12 {
+            let current = await MenuBarCatalog().windows()
+            item = current.first(where: {
+                $0.id == recorded.id && $0.ownerPID == recorded.ownerPID &&
+                $0.title == recorded.title && $0.isIconSized
+            })
+            if let item, visibleBounds.map({ Self.isClickable(item, on: $0) }) != false { break }
+            try await Task.sleep(for: .milliseconds(80))
+        }
+        guard let item else { throw MenuBarActivationError.itemExited }
+        guard visibleBounds.map({ Self.isClickable(item, on: $0) }) != false else {
+            throw MenuBarActivationError.unsupported
         }
         // Prefer the app's supported accessibility action. Scan only its extra menu bar,
         // never document windows, text fields, or other application content.
@@ -82,41 +97,25 @@ actor MenuBarActivation {
                 if AXUIElementPerformAction(element, action as CFString) == .success { return }
             }
         }
-        // Some status extras expose no AXPress. Route a click only to this validated
-        // status window; no global cursor movement or menu bar expansion is involved.
-        let payloads = await Self.clickEventData(for: item, rightClick: rightClick)
-        guard payloads.count == 2,
-              let down = CGEvent(withDataAllocator: nil, data: payloads[0] as CFData),
-              let up = CGEvent(withDataAllocator: nil, data: payloads[1] as CFData) else {
+        // Some status extras expose no AXPress. Send a real session mouse event
+        // to the now-visible item so WindowServer can route its native menu.
+        let point = CGPoint(x: item.frame.midX, y: item.frame.midY)
+        let button: CGMouseButton = rightClick ? .right : .left
+        let downType: CGEventType = rightClick ? .rightMouseDown : .leftMouseDown
+        let upType: CGEventType = rightClick ? .rightMouseUp : .leftMouseUp
+        guard let down = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: point, mouseButton: button),
+              let up = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: point, mouseButton: button) else {
             throw MenuBarActivationError.unsupported
         }
-        // Quartz serialization drops routing fields. Set them on the live events
-        // after reconstruction, immediately before posting to the validated owner.
         for event in [down, up] {
             event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(item.ownerPID))
             event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(item.id))
             event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(item.id))
             event.setIntegerValueField(.mouseEventClickState, value: 1)
         }
-        down.postToPid(item.ownerPID)
+        down.post(tap: .cgSessionEventTap)
         try await Task.sleep(for: .milliseconds(35))
-        up.postToPid(item.ownerPID)
-    }
-
-    @MainActor
-    static func clickEventData(for item: MenuBarWindow, rightClick: Bool) -> [Data] {
-        let types: [NSEvent.EventType] = rightClick ? [.rightMouseDown, .rightMouseUp] : [.leftMouseDown, .leftMouseUp]
-        return types.compactMap { type in
-            // The public AppKit initializer includes the receiving window number.
-            // Plain CG mouse events omit that information for offscreen windows.
-            guard let native = NSEvent.mouseEvent(with: type, location: CGPoint(x: item.frame.width / 2, y: item.frame.height / 2),
-                                                  modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                  windowNumber: Int(item.id), context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
-                  let event = native.cgEvent else { return nil }
-            event.location = CGPoint(x: item.frame.midX, y: item.frame.midY)
-            guard let data = event.data else { return nil }
-            return data as Data
-        }
+        up.post(tap: .cgSessionEventTap)
     }
 
     private func matchingExtra(in app: AXUIElement, frame: CGRect, allowSingleItem: Bool) -> AXUIElement? {
