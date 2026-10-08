@@ -10,7 +10,7 @@ Barloom brings a menu bar icon shelf, live system readings, an animated companio
 
 | Area | Current features |
 | --- | --- |
-| **Menu Bar** | An optional horizontal shelf below the menu bar; a visual icon chooser; selected icon images in the shelf; keyboard shortcut; custom image for Barloom's own status item. |
+| **Menu Bar** | An optional horizontal shelf below the menu bar; a visual icon chooser; selected icon images in the shelf; a built-in Barloom tools button; keyboard shortcut; custom image for Barloom's own status item. |
 | **System Monitor** | CPU, memory, disk capacity, network rates, battery, uptime, and thermal readings; a dashboard and optional status widget. |
 | **Runner** | Cat, Orbit, and Pulse animations that respond to CPU usage, with reduced-motion support. |
 | **Local Ports** | Discover TCP listeners visible to your user, search by process or port, open or copy localhost URLs, and confirm a graceful stop for supported development processes. |
@@ -40,7 +40,7 @@ Changing the signing identity may cause macOS to ask for Screen Recording and Ac
 ### Try the app
 
 1. Open **Settings** in the dashboard and enable the modules you want. Menu Bar management starts disabled.
-2. Click Barloom's menu bar icon or press **Control–Option–B** to open the icon shelf. **Shift-click** the icon for the Quick Monitor popover.
+2. Click Barloom's menu bar icon or press **Control–Option–B** to open the icon shelf. Click **Barloom** at the left of the shelf for live CPU, RAM, battery, network, disk, and local-port readings. Switch to **Port Manager** in the same panel to search listeners, copy their URLs, or open them in a browser. **Shift-click** the menu bar icon for the Quick Monitor popover.
 3. In **Menu Bar** settings, choose which discovered icons appear in the shelf. Right-click Barloom and choose **Open All Hidden Icons** to reach hidden icons that are not selected.
 4. Open **Local Ports** to inspect listeners. The Stop action is offered only for supported development processes owned by your user and asks for confirmation.
 

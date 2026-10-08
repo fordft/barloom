@@ -18,6 +18,10 @@ struct IconShelfContext {
     let finishActivation: (() -> Void)?
 }
 
+enum ShelfToolPage: Hashable {
+    case overview, ports
+}
+
 @MainActor
 final class IconShelfState: ObservableObject {
     @Published var icons: [CapturedMenuBarIcon] = []
@@ -27,6 +31,7 @@ final class IconShelfState: ObservableObject {
     @Published var notice: String?
     @Published var section: MenuBarSection = .hidden
     @Published var width: CGFloat = 480
+    @Published var toolPage: ShelfToolPage?
 }
 
 @MainActor
@@ -47,6 +52,7 @@ final class IconShelfController {
     private var context: IconShelfContext?
     private var isActivating = false
     private var refreshTask: Task<Void, Never>?
+    private var toolsRefreshTask: Task<Void, Never>?
     private var autoCloseTask: Task<Void, Never>?
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
@@ -77,13 +83,18 @@ final class IconShelfController {
         background.wantsLayer = true
         background.layer?.cornerRadius = 13
         background.layer?.masksToBounds = true
-        let view = NSHostingView(rootView: IconShelfView(state: state, openSettings: { [weak model] in
-            model?.openDashboard?(.menuBar)
+        let view = NSHostingView(rootView: IconShelfView(state: state, openPage: { [weak model] page in
+            model?.closeIconShelf()
+            model?.openDashboard?(page)
         }, close: { [weak model] in
             model?.closeIconShelf()
         }, activate: { [weak self] icon, right in
             self?.activate(icon, rightClick: right)
-        }))
+        }, toggleTools: { [weak self] in
+            self?.toggleTools()
+        }, selectToolPage: { [weak self] page in
+            self?.selectToolPage(page)
+        }).environmentObject(model))
         view.translatesAutoresizingMaskIntoConstraints = false
         background.addSubview(view)
         NSLayoutConstraint.activate([
@@ -106,6 +117,7 @@ final class IconShelfController {
         self.context = context
         state.section = section
         state.icons = []
+        state.toolPage = nil
         state.notice = nil
         state.isLoading = true
         model.menuBarAccess.refresh()
@@ -141,6 +153,8 @@ final class IconShelfController {
     func close() {
         refreshTask?.cancel()
         refreshTask = nil
+        toolsRefreshTask?.cancel()
+        toolsRefreshTask = nil
         autoCloseTask?.cancel()
         autoCloseTask = nil
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
@@ -150,6 +164,7 @@ final class IconShelfController {
         panel.orderOut(nil)
         context = nil
         isActivating = false
+        state.toolPage = nil
         state.icons = []
     }
 
@@ -233,17 +248,45 @@ final class IconShelfController {
 
     private func resizeToIcons() {
         let total = state.icons.reduce(CGFloat(0)) { sum, icon in sum + max(32, min(160, icon.window.frame.width)) + 4 }
-        resize(width: state.icons.isEmpty ? 380 : total + 100)
+        resize(width: state.icons.isEmpty ? 480 : total + 200)
     }
 
     private func resize(width: CGFloat) {
         guard let context else { return }
         let screen = context.screen
         let barHeight = max(NSStatusBar.system.thickness, screen.frame.maxY - screen.visibleFrame.maxY)
+        let height: CGFloat = state.toolPage == nil ? 52 : min(430, max(200, screen.frame.height - max(barHeight, screen.safeAreaInsets.top) - 24))
         let target = MenuBarGeometry.shelfFrame(screen: screen.frame, menuBarHeight: barHeight,
-                                                notchHeight: screen.safeAreaInsets.top, anchorX: context.anchorFrame.maxX, desiredWidth: width)
-        state.width = target.width
+                                                notchHeight: screen.safeAreaInsets.top, anchorX: context.anchorFrame.maxX,
+                                                desiredWidth: state.toolPage == nil ? width : max(620, width), height: height)
+        if state.width != target.width { state.width = target.width }
         panel.setFrame(target, display: true)
+    }
+
+    private func toggleTools() {
+        state.toolPage = state.toolPage == nil ? .overview : nil
+        resizeToIcons()
+        updateToolsRefresh()
+    }
+
+    private func selectToolPage(_ page: ShelfToolPage) {
+        guard state.toolPage != nil else { return }
+        state.toolPage = page
+        if page == .ports { Task { await model.refreshPorts() } }
+    }
+
+    private func updateToolsRefresh() {
+        toolsRefreshTask?.cancel()
+        toolsRefreshTask = nil
+        guard state.toolPage != nil, model.preferences.portsEnabled else { return }
+        toolsRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.model.refreshPorts()
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+            }
+        }
     }
 
     private func activate(_ icon: CapturedMenuBarIcon, rightClick: Bool) {
@@ -298,48 +341,69 @@ final class IconShelfController {
 
 struct IconShelfView: View {
     @ObservedObject var state: IconShelfState
-    let openSettings: () -> Void
+    let openPage: (DashboardPage) -> Void
     let close: () -> Void
     let activate: (CapturedMenuBarIcon, Bool) -> Void
+    let toggleTools: () -> Void
+    let selectToolPage: (ShelfToolPage) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            if !state.canCapture {
-                Image(systemName: "lock.rectangle").foregroundStyle(AppColors.violet)
-                Text("Allow Screen Recording to show hidden icons.").font(.system(size: 12)).lineLimit(1)
-                Spacer(minLength: 4)
-                Button("Allow access…", action: openSettings).controlSize(.small)
-            } else if state.isLoading && state.icons.isEmpty {
-                ProgressView().controlSize(.small)
-                Text("Loading hidden icons…").font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer()
-            } else if state.icons.isEmpty {
-                Image(systemName: "menubar.rectangle").foregroundStyle(AppColors.violet)
-                Text(state.notice ?? "No icons selected. Choose them in Menu Bar settings.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 0)
-            } else {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 4) {
-                        ForEach(state.icons) { icon in
-                            MenuBarIconButton(icon: icon, activate: { right in activate(icon, right) })
-                                .frame(width: max(32, min(160, icon.window.frame.width)), height: 36)
-                                .help(icon.window.title.isEmpty ? icon.window.ownerName : icon.window.title)
-                        }
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button(action: toggleTools) {
+                    HStack(spacing: 6) {
+                        BloomLogo(size: 28)
+                        Text("Barloom").font(.system(size: 12, weight: .semibold))
+                        Image(systemName: state.toolPage == nil ? "chevron.down" : "chevron.up")
+                            .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
                     }
-                }.scrollIndicators(.hidden)
-                if !state.canControl {
-                    Button(action: openSettings) { Image(systemName: "hand.tap") }.help("Allow Accessibility to click icons")
                 }
+                .accessibilityLabel("Barloom tools")
+                .help("Show CPU, memory, battery, and ports")
+                Divider().frame(height: 22)
+                if !state.canCapture {
+                    Image(systemName: "lock.rectangle").foregroundStyle(AppColors.violet)
+                    Text("Allow Screen Recording to show hidden icons.").font(.system(size: 12)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("Allow access…") { openPage(.menuBar) }.controlSize(.small)
+                } else if state.isLoading && state.icons.isEmpty {
+                    ProgressView().controlSize(.small)
+                    Text("Loading hidden icons…").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer()
+                } else if state.icons.isEmpty {
+                    Image(systemName: "menubar.rectangle").foregroundStyle(AppColors.violet)
+                    Text(state.notice ?? "No icons selected. Choose them in Menu Bar settings.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                } else {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 4) {
+                            ForEach(state.icons) { icon in
+                                MenuBarIconButton(icon: icon, activate: { right in activate(icon, right) })
+                                    .frame(width: max(32, min(160, icon.window.frame.width)), height: 36)
+                                    .help(icon.window.title.isEmpty ? icon.window.ownerName : icon.window.title)
+                            }
+                        }
+                    }.scrollIndicators(.hidden)
+                    if !state.canControl {
+                        Button { openPage(.menuBar) } label: { Image(systemName: "hand.tap") }
+                            .help("Allow Accessibility to click icons")
+                    }
+                }
+                Divider().frame(height: 22)
+                Button { openPage(.menuBar) } label: { Image(systemName: "slider.horizontal.3") }.help("Menu Bar settings")
+                Button(action: close) { Image(systemName: "xmark") }.help("Close icon bar · Escape")
             }
-            Divider().frame(height: 22)
-            Button(action: openSettings) { Image(systemName: "slider.horizontal.3") }.help("Menu Bar settings")
-            Button(action: close) { Image(systemName: "xmark") }.help("Close icon bar · Escape")
+            .padding(.horizontal, 12)
+            .frame(height: 52)
+            if let page = state.toolPage {
+                Divider().padding(.horizontal, 12)
+                ShelfToolsView(page: page, selectPage: selectToolPage, openPage: openPage)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .frame(width: state.width, height: 52)
-        .accessibilityLabel(state.section.title)
+        .frame(width: state.width)
     }
 }
 
