@@ -45,6 +45,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.setAccessibilityLabel("Barloom")
             button.setAccessibilityHelp("Open hidden icons below the menu bar. Shift-click for the system monitor.")
+            button.toolTip = "Click to open hidden icons · Shift-click for Quick Monitor"
         }
         popover.behavior = .transient
         popover.animates = true

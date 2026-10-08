@@ -317,6 +317,18 @@ struct MenuBarIconButton: NSViewRepresentable {
     let activate: (Bool) -> Void
 
     @MainActor
+    static func image(for icon: CapturedMenuBarIcon) -> NSImage? {
+        guard let png = icon.png, let image = NSImage(data: png) else { return nil }
+        // Quartz returns backing pixels at the display's scale. NSImage(data:)
+        // treats those pixels as points, so Retina captures otherwise render
+        // twice as large and get needlessly scaled down by NSButton.
+        let logicalSize = icon.window.frame.size
+        let scale = min(1, 24 / max(1, logicalSize.height))
+        image.size = CGSize(width: logicalSize.width * scale, height: logicalSize.height * scale)
+        return image
+    }
+
+    @MainActor
     final class IconButton: NSButton {
         var activate: ((Bool) -> Void)?
         override func rightMouseDown(with event: NSEvent) {}
@@ -339,7 +351,7 @@ struct MenuBarIconButton: NSViewRepresentable {
     func updateNSView(_ button: IconButton, context: Context) {
         button.activate = activate
         button.setAccessibilityLabel(icon.window.title.isEmpty ? icon.window.ownerName : icon.window.title)
-        button.image = icon.png.flatMap(NSImage.init(data:)) ?? NSImage(systemSymbolName: "exclamationmark.circle", accessibilityDescription: "Icon unavailable")
+        button.image = Self.image(for: icon) ?? NSImage(systemSymbolName: "exclamationmark.circle", accessibilityDescription: "Icon unavailable")
         button.isEnabled = icon.png != nil
     }
 }

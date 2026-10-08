@@ -62,6 +62,36 @@ struct PresentationTests {
         #expect(event.location == CGPoint(x: -20_084, y: 15))
     }
 
+    @Test func retinaCaptureKeepsItsPixelDetailAtMenuBarPointSize() throws {
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 60, pixelsHigh: 48,
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                   isPlanar: false, colorSpaceName: .deviceRGB,
+                                                   bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        let window = MenuBarWindow(id: 42, ownerPID: 999, ownerName: "Test", title: "",
+                                   frame: CGRect(x: 0, y: 0, width: 30, height: 24))
+        let image = try #require(MenuBarIconButton.image(for: CapturedMenuBarIcon(window: window, png: png)))
+        #expect(image.size == CGSize(width: 30, height: 24))
+        let representation = try #require(image.representations.first as? NSBitmapImageRep)
+        #expect(representation.pixelsWide == 60)
+        #expect(representation.pixelsHigh == 48)
+    }
+
+    @Test func tallerStatusWindowsFitTheSameIconHeightOnEveryDisplay() throws {
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                   isPlanar: false, colorSpaceName: .deviceRGB,
+                                                   bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        let window = MenuBarWindow(id: 43, ownerPID: 999, ownerName: "Test", title: "",
+                                   frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let image = try #require(MenuBarIconButton.image(for: CapturedMenuBarIcon(window: window, png: png)))
+        #expect(image.size == CGSize(width: 24, height: 24))
+        let representation = try #require(image.representations.first as? NSBitmapImageRep)
+        #expect(representation.pixelsWide == 64)
+        #expect(representation.pixelsHigh == 64)
+    }
+
     private func makeModel() throws -> (AppModel, UserDefaults, String) {
         let name = "com.barloom.tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))
